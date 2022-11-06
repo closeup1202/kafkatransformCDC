@@ -157,7 +157,15 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         final Schema parentSchema = ChangedDataSchema.parentSchema(schema, childValue);
         final Struct parentValue = ChangedDataSchema.parentValue(value, childValue, parentSchema);
 
+        if(unnecessaryRecordCheck(value)){
+            return unnecessaryRecord(record);
+        }
+
         return newRecord(record, parentSchema, parentValue);
+    }
+
+    private boolean unnecessaryRecordCheck(Struct value) {
+        return false;
     }
 
     private List<Integer> getDiffIndexToList(Struct value) {
