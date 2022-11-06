@@ -276,6 +276,7 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
     protected abstract Schema operatingSchema(R record);
     protected abstract Object operatingValue(R record);
     protected abstract R newRecord(R record, Schema updatedSchema, Object updatedValue);
+    protected abstract R unnecessaryRecord(R record);
 
     public static class Key<R extends ConnectRecord<R>> extends TransformCdc<R> {
 
@@ -288,6 +289,11 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         @Override
         protected R newRecord(R record, Schema updatedSchema, Object updatedValue) {
             return record.newRecord(record.topic(), record.kafkaPartition(), updatedSchema, updatedValue, record.valueSchema(), record.value(), record.timestamp());
+        }
+
+        @Override
+        protected R unnecessaryRecord(R record) {
+            return record.newRecord("garbage-record-collect", 0, null, null, null, null, record.timestamp());
         }
 
     }
@@ -303,6 +309,11 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         @Override
         protected R newRecord(R record, Schema updatedSchema, Object updatedValue) {
             return record.newRecord(record.topic(), record.kafkaPartition(), record.keySchema(), record.key(), updatedSchema, updatedValue, record.timestamp());
+        }
+
+        @Override
+        protected R unnecessaryRecord(R record) {
+            return record.newRecord("garbage-record-collect", 0, null, null, null, null, record.timestamp());
         }
 
     }
