@@ -35,6 +35,7 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
     private Map<String, String> reverseRenameMap;
     private ObjectMapper objectMapper;
     private Map<String, Object> txIdCache;
+    private List<String> txIdList;
 
     @Override
     public void configure(Map<String, ?> props) {
@@ -44,11 +45,12 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         objectMapper = new ObjectMapper().setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY);
         reverseRenameMap = reverse(renameMap);
         txIdCache = new LinkedHashMap<>();
+        txIdList = new ArrayList<>();
     }
 
     /* 테스트용 */
-    public void putTxIdForTesting(){
-        txIdCache.put("0a0014002f030000", "0a0014002f030000");
+    public Map<String, Object> getTxIdCache(){
+        return this.txIdCache;
     }
 
     private Map<String, String> reverse(Map<String, String> source) {
@@ -59,7 +61,12 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
 
     @Override
     public R apply(R record) {
-        return (Objects.isNull(operatingSchema(record))) ? record : applyWithSchema(record);
+        if(Objects.isNull(operatingSchema(record))){
+            return record;
+        } else {
+            txIdList.clear();
+            return applyWithSchema(record);
+        }
     }
 
     private R applyWithSchema(R record) {
@@ -111,38 +118,58 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         return builder.build();
     }
 
-    private Schema metaSchema(Struct value) {
-        return hasLobPiece(value) ? MetaSchema.LOB : MetaSchema.BASIC;
-    }
-
     private String reverseRenamed(String name) {
         return reverseRenameMap.getOrDefault(name, name);
     }
 
+    private Schema metaSchema(Struct value) {
+        return hasLobPiece(value) ? MetaSchema.LOB : MetaSchema.BASIC;
+    }
+
     private Struct convertSourceToMeta(Struct value, String fieldName, Field op) {
-        final Struct originalSource = (Struct) value.get(reverseRenamed(fieldName));
+        final Struct source = (Struct) value.get(reverseRenamed(fieldName));
         final String opValue = value.get(op).toString().toUpperCase();
 
         if(hasLobPiece(value)){
-            final Struct struct = metaStruct(originalSource, opValue, MetaSchema.LOB);
+            final Struct struct = metaStruct(source, opValue, MetaSchema.LOB);
             struct.put(MetaSchema.Fields.LOB_PIECE, "last");
             return struct;
         }
 
-        return metaStruct(originalSource, opValue, MetaSchema.BASIC);
+        return metaStruct(source, opValue, MetaSchema.BASIC);
     }
 
-    private Struct metaStruct(Struct originalSource, String opValue, Schema schema){
-        final Struct refinedStruct = new Struct(schema);
-        final Object txId = originalSource.get("txId");
+    private boolean hasLobPiece(Struct value){
+        final Object[] objects = keyAndData(value);
+        final Struct source = (Struct) value.get(Fields.SOURCE);
+        final Object txId = source.get("txId");
 
-        refinedStruct.put(MetaSchema.Fields.TABLE,      originalSource.get("table"));
-        refinedStruct.put(MetaSchema.Fields.CSCN,       originalSource.get("scn"));
-        refinedStruct.put(MetaSchema.Fields.TXID,       Objects.isNull(txId) ? null : txIdCache.computeIfAbsent(txId.toString(), key -> txId));
-        refinedStruct.put(MetaSchema.Fields.OP,         Objects.equals(opValue, "C") ? "I" : opValue);
-        refinedStruct.put(MetaSchema.Fields.CURRENT_TS, DateFormatCdc.convert(originalSource.get("ts_ms")));
+        if(Objects.isNull(txId) || ArrayUtils.contains(objects, null)){
+            return false;
+        }
 
-        return refinedStruct;
+        if(Objects.isNull(txIdCache.get(txId.toString()))){
+            System.out.println("hasLobPiece :: txId null");
+            return false;
+        }
+
+        Object key = objects[0];
+        Object data = objects[1];
+
+        return key.toString().contains(CLOB) && checkClobCounterIndex(key, data);
+    }
+
+    private Struct metaStruct(Struct source, String opValue, Schema schema){
+        final Struct struct = new Struct(schema);
+        final Object txId = source.get("txId");
+
+        struct.put(MetaSchema.Fields.TABLE,      source.get("table"));
+        struct.put(MetaSchema.Fields.CSCN,       source.get("scn"));
+        struct.put(MetaSchema.Fields.TXID,       Objects.isNull(txId) ? null : txIdCache.computeIfAbsent(txId.toString(), key -> {txIdList.add(txId.toString()); return txId;}));
+        struct.put(MetaSchema.Fields.OP,         Objects.equals(opValue, "C") ? "I" : opValue);
+        struct.put(MetaSchema.Fields.CURRENT_TS, DateFormatCdc.convert(source.get("ts_ms")));
+
+        return struct;
     }
 
     private R cutDownRecord(R record, Schema schema, Struct value) {
@@ -157,15 +184,31 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         final Schema parentSchema = ChangedDataSchema.parentSchema(schema, childValue);
         final Struct parentValue = ChangedDataSchema.parentValue(value, childValue, parentSchema);
 
-        if(unnecessaryRecordCheck(value)){
+        if(inCaseLobNullInsert(value, parentValue)){
+            System.out.println("unnecessary....");
             return unnecessaryRecord(record);
         }
 
         return newRecord(record, parentSchema, parentValue);
     }
 
-    private boolean unnecessaryRecordCheck(Struct value) {
-        return false;
+    private boolean inCaseLobNullInsert(Struct value, Struct parentValue) {
+        Struct meta = (Struct) value.get(Fields.META);
+        Object key = value.get(Fields.KEY);
+        Object data = parentValue.get(Fields.DATA);
+        List<String> keyList = convertValuesToList(key);
+        List<String> dataValueList = convertValuesToList(data);
+        String op = meta.get(Fields.OP).toString();
+        String txId = meta.get(MetaSchema.Fields.TXID).toString();
+
+        long keyClobCount = getCount(keyList, CLOB);
+        long dataNullCount = getCount(dataValueList, "null");
+
+        return keyClobCount == dataNullCount && Objects.equals(op, "U") && !txIdList.contains(txId);
+    }
+
+    private long getCount(List<String> list, String include) {
+        return list.stream().filter(item -> Objects.equals(item, include)).count();
     }
 
     private List<Integer> getDiffIndexToList(Struct value) {
@@ -173,6 +216,10 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         Object data = value.get(Fields.DATA);
         List<String> keyValueList = convertValuesToList(key);
         List<String> dataValueList = convertValuesToList(data);
+
+        if(Objects.equals(key, data)){
+            throw new DataException("unchanged...");
+        }
 
         List<Integer> list = new ArrayList<>();
 
@@ -183,35 +230,22 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         return list;
     }
 
-    private boolean hasLobPiece(Struct value){
-        final Object[] objects = keyAndData(value);
-        
-        if(!ArrayUtils.contains(objects, null)){
-            Object key = objects[0];
-            Object data = objects[1];
-
-            return key.toString().contains(CLOB) && checkClobCounterIndex(key, data);
-        }
-
-        return false;
-    }
-
     /* [CLOB] 과 대응되는 컬럼 체크하여 lob_piece 부착 여부 결정 */
     private boolean checkClobCounterIndex(Object key, Object data) {
-        List<String> keyValueList = convertValuesToList(key);
-        List<String> dataValueList = convertValuesToList(data);
+        List<String> keyList = convertValuesToList(key);
+        List<String> dateList = convertValuesToList(data);
 
-        if(!keyValueList.contains(CLOB)){
+        if(!keyList.contains(CLOB)){
             return false;
         }
 
-        return countMismatch(keyValueList, dataValueList) && isNullClobColumn(keyValueList, dataValueList);
+        return countMismatch(keyList, dateList) && isNullClobColumn(keyList, dateList);
     }
 
     /* key - data = [CLOB] : [CLOB] 개수 비교 */
     private boolean countMismatch(List<String> key, List<String> data) {
-        long keyClobCount = key.stream().filter(item -> Objects.equals(item, CLOB)).count();
-        long dataClobCount = data.stream().filter(item -> Objects.equals(item, CLOB)).count();
+        long keyClobCount = getCount(key, CLOB);
+        long dataClobCount = getCount(data, CLOB);
         return keyClobCount != dataClobCount;
     }
 
@@ -224,11 +258,11 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
                  .forEach(clobColumns::add);
 
         for (Integer i : clobColumns) {
-            if(Objects.equals(data.get(i), "null")){
-                return false;
+            if(!Objects.equals(data.get(i), "null") && !Objects.equals(data.get(i), CLOB)){
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     private List<String> convertValuesToList(Object struct) {
@@ -278,7 +312,8 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
 
     @Override
     public void close() {
-        txIdCache = null;
+        txIdCache.clear();
+        txIdList.clear();
     }
 
     protected abstract Schema operatingSchema(R record);
@@ -301,9 +336,8 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
 
         @Override
         protected R unnecessaryRecord(R record) {
-            return record.newRecord("garbage-record-collect", 0, null, null, null, null, record.timestamp());
+            return record.newRecord("garbage-collect-debezium", 0, null, null, null, null, null);
         }
-
     }
 
     public static class Value<R extends ConnectRecord<R>> extends TransformCdc<R> {
@@ -321,9 +355,7 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
 
         @Override
         protected R unnecessaryRecord(R record) {
-            return record.newRecord("garbage-record-collect", 0, null, null, null, null, record.timestamp());
+            return record.newRecord("garbage-collect-debezium", 0, null, null, null, null, null);
         }
-
     }
-
 }

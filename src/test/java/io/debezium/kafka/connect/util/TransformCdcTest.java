@@ -94,24 +94,20 @@ class TransformCdcTest {
         result(value, "update updatedValue = ");
     }
 
-    /*
     @Test
-    @DisplayName("maptest")
-    void map (){
-        Map<String, Object> map = new HashMap<>();
+    @DisplayName("update_none_change_test2")
+    void withSchemaUpdateValuesNotChange() {
+        requireSet();
 
-        String big = "big";
-        String small = "small";
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("a", "a"));
+        value.put("after", getAfterValue("a", "a"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
 
-        map.put(small, "mall");
-
-        Object pig = map.putIfAbsent(big, "pig"); //없으면 넣고 null 반환
-        Object mall = map.computeIfAbsent(small, key -> "mall22222"); //없으면 넣고 두번째 파라미터로 계산된 것 반환, 있으면 가져옴
-
-        System.out.println("map = " + map);
-        System.out.println("mall = " + mall);
-        System.out.println("pig = " + pig);
+        result(value, "update updatedValue = ");
     }
-    */
+
 }
 

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.*;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static io.debezium.kafka.connect.util.TestSchemas.*;
@@ -31,7 +32,8 @@ class TransformCdcLOBTest {
 
     private void txIdCacheSet() {
         requireSet();
-        form.putTxIdForTesting();
+        Map<String, Object> txIdCache = form.getTxIdCache();
+        txIdCache.put("0a0014002f030000", "0a0014002f030000");
     }
 
     private void result(Struct value, String print) {
@@ -44,9 +46,39 @@ class TransformCdcLOBTest {
     }
 
     @Test
-    @DisplayName("update_lob_success : lob_piece O")
-    void withSchemaUpdateLOB() {
+    @DisplayName("update_lob_no_tx : lob_piece x")
+    void withSchemaUpdateLOBNoTX() {
         requireSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "a"));
+        value.put("after", getAfterValue("a", "d"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "update_lob_no_tx : lob_piece x updatedValue = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_no_tx(2) : lob_piece x")
+    void withSchemaUpdateLOBNoTx2() {
+        requireSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
+        value.put("after", getAfterValue("null", "a"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "update_lob_no_tx(2) : lob_piece x updatedValue = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_success : lob_piece O(1)")
+    void withSchemaUpdateLOB() {
+        txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "a"));
@@ -59,9 +91,9 @@ class TransformCdcLOBTest {
     }
 
     @Test
-    @DisplayName("update_lob_success2 : lob_piece O(2)")
+    @DisplayName("update_lob_success : lob_piece O(2)")
     void withSchemaUpdateLOB2() {
-        requireSet();
+        txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
@@ -74,9 +106,84 @@ class TransformCdcLOBTest {
     }
 
     @Test
-    @DisplayName("update_lob_fail : lob_piece X")
-    void withSchemaUpdateLOB_fail() {
+    @DisplayName("update_lob_success : lob_piece O(3)")
+    void withSchemaUpdateLOB3() {
+        txIdCacheSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
+        value.put("after", getAfterValue("null", "a"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "lob_test_success updatedValue = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_success : lob_piece O(4)")
+    void withSchemaUpdateLOB4() {
+        txIdCacheSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
+        value.put("after", getAfterValue("a", "null"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "lob_test_success updatedValue = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_success [CLOB]2 : a, [CLOB] :: lob_piece O")
+    void withSchemaUpdateLOB5(){
+        txIdCacheSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
+        value.put("after", getAfterValue("a", "[CLOB]"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "update_lob_success [CLOB] [CLOB] : a, [CLOB] = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_no event")
+    void noEvent() {
+        txIdCacheSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
+        value.put("after", getAfterValue("null", "null"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "lob no event = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_ok event")
+    void okEvent() {
         requireSet();
+
+        final Struct value = new Struct(schema);
+        value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
+        value.put("after", getAfterValue("null", "null"));
+        value.put("source", getSourceValue());
+        value.put("op", "u");
+        value.put("ts_ms", "1666770079594");
+
+        result(value, "lob ok event = ");
+    }
+
+    @Test
+    @DisplayName("update_lob_fail : [CLOB] - a : [CLOB] - c :: lob_piece X")
+    void withSchemaUpdateLOB_fail() {
+        txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "a"));
@@ -85,13 +192,13 @@ class TransformCdcLOBTest {
         value.put("op", "u");
         value.put("ts_ms", "1666770079594");
 
-        result(value, "lob_fail updatedValue = ");
+        result(value, "update_lob_fail : [CLOB] - a : [CLOB] - c updatedValue = ");
     }
 
     @Test
-    @DisplayName("update_lob_fail_null : [CLOB] - null :: lob_piece X")
+    @DisplayName("update_lob_fail_null : [CLOB] - 'a' : null - 'a' :: lob_piece X")
     void withSchemaUpdateLOBNull() {
-        requireSet();
+        txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "a"));
@@ -100,13 +207,13 @@ class TransformCdcLOBTest {
         value.put("op", "u");
         value.put("ts_ms", "1666770079594");
 
-        result(value, "lob_null updatedValue = ");
+        result(value, "update_lob_fail_null : [CLOB] - 'a' : null - 'a' updatedValue = ");
     }
 
     @Test
-    @DisplayName("update_lob_fail_null2 : [CLOB] - null (2이상) :: lob_piece X")
+    @DisplayName("update_lob_fail_null2 : [CLOB] - [CLOB] : null - null  :: lob_piece X")
     void withSchemaUpdateLOBNull2() {
-        requireSet();
+        txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
@@ -115,13 +222,13 @@ class TransformCdcLOBTest {
         value.put("op", "u");
         value.put("ts_ms", "1666770079594");
 
-        result(value, "lob_two_null updatedValue = ");
+        result(value, "update_lob_fail_null2 : [CLOB] - [CLOB] : null - null updatedValue = ");
     }
 
     @Test
-    @DisplayName("update_lob_fail_null3 : [CLOB] - null (behind) :: lob_piece X")
+    @DisplayName("update_lob_fail_null3 : [CLOB] - [CLOB] : [CLOB] - null :: lob_piece X")
     void withSchemaUpdateLOBNull3() {
-        requireSet();
+        txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
@@ -130,98 +237,24 @@ class TransformCdcLOBTest {
         value.put("op", "u");
         value.put("ts_ms", "1666770079594");
 
-        result(value, "lob_two_null_back updatedValue = ");
+        result(value, "update_lob_fail_null3 : [CLOB] - [CLOB] : [CLOB] - null updatedValue = ");
     }
 
     @Test
-    @DisplayName("update_lob_txId flag : txId(O), [CLOB] - a :: KEY O")
-    void transactionValue_key (){
-        txIdCacheSet();
-
-        final Struct value = new Struct(schema);
-        value.put("before", getBeforeValue("[CLOB]", "a"));
-        value.put("after", getAfterValue("a", "a"));
-        value.put("source", getSourceValue());
-        value.put("op", "u");
-        value.put("ts_ms", "1666770079594");
-
-        result(value, "[CLOB] - a 이면 KEY를 삭제하지 않는다 = ");
-    }
-
-    @Test
-    @DisplayName("update_lob_txId flag : txId(O), [CLOB] - null :: KEY X")
-    void transactionValueCheck_deleteKey (){
-        txIdCacheSet();
-
-        final Struct value = new Struct(schema);
-        value.put("before", getBeforeValue("[CLOB]", "a"));
-        value.put("after", getAfterValue("null", "a"));
-        value.put("source", getSourceValue());
-        value.put("op", "u");
-        value.put("ts_ms", "1666770079594");
-
-        result(value, "txId(O) [CLOB] - null :::: KEY를 삭제 = ");
-    }
-
-    @Test
-    @DisplayName("update_lob_txId flag : txId(O), [CLOB] - null :: KEY X")
-    void transactionValueCheck_deleteKey2 (){
+    @DisplayName("update_lob_fail_[CLOB]2 : [CLOB]2 :: lob_piece X")
+    void update_lob_kod_1 (){
         txIdCacheSet();
 
         final Struct value = new Struct(schema);
         value.put("before", getBeforeValue("[CLOB]", "[CLOB]"));
-        value.put("after", getAfterValue("null", "null"));
+        value.put("after", getAfterValue("[CLOB]", "[CLOB]"));
         value.put("source", getSourceValue());
         value.put("op", "u");
         value.put("ts_ms", "1666770079594");
 
-        result(value, "txId(O) [CLOB] - null :::: KEY를 삭제 = ");
+        result(value, "update_lob_fail_[CLOB]2 : [CLOB]2 = ");
     }
 
-    @Test
-    @DisplayName("KPP_DRAFT_OULN update lob(1) :: lob_piece X")
-    void update_lob_kod_1 (){
-        requireSet();
-
-        final Struct value = new Struct(kdoDefaultSchema);
-        value.put("before", getBeforeKDOValue("[CLOB]", "[CLOB]"));
-        value.put("after", getAfterKDOValue("[CLOB]", "[CLOB]"));
-        value.put("source", getSourceValue());
-        value.put("op", "u");
-        value.put("ts_ms", "1666770079594");
-
-        result(value, "KPP_DRAFT_OULN update lob(1) = ");
-    }
-
-    @Test
-    @DisplayName("KPP_DRAFT_OULN update lob(2) :: lob_piece O")
-    void update_lob_kod_2 (){
-        requireSet();
-
-        final Struct value = new Struct(kdoDefaultSchema);
-        value.put("before", getBeforeKDOValue("[CLOB]", "[CLOB]"));
-        value.put("after", getAfterKDOValue("a", "[CLOB]"));
-        value.put("source", getSourceValue());
-        value.put("op", "u");
-        value.put("ts_ms", "1666770079594");
-
-        result(value, "KPP_DRAFT_OULN update lob(2) = ");
-    }
-
-    @Test
-    @DisplayName("KPP_DRAFT_OULN update lob(3) :: lob_piece O")
-    void update_lob_kod_3 (){
-        requireSet();
-
-        final Struct value = new Struct(kdoDefaultSchema);
-        value.put("before", getBeforeKDOValue("[CLOB]", "[CLOB]"));
-        value.put("after", getAfterKDOValue("[CLOB]", "a"));
-        value.put("source", getSourceValue());
-        value.put("op", "u");
-        value.put("ts_ms", "1666770079594");
-
-        result(value, "KPP_DRAFT_OULN update lob(3) = ");
-    }
 
     /*
     @Test
