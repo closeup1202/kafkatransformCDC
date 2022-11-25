@@ -149,7 +149,6 @@ public abstract class TransformCdc<R extends ConnectRecord<R>> implements Transf
         }
 
         if(Objects.isNull(txIdCache.get(txId.toString()))){
-            System.out.println("hasLobPiece :: txId null");
             return false;
         }
 
